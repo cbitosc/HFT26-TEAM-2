@@ -1,9 +1,9 @@
 {
   "table": "pscomppars",
-  "description": "Pinned column whitelist for NASA Exoplanet Archive pscomppars (Planetary Systems Composite Parameters, DOI 10.26133/NEA13). Verified against real CSV header (325 columns, 6,451 rows).",
+  "description": "Pinned column whitelist (83 columns) for NASA Exoplanet Archive pscomppars (Planetary Systems Composite Parameters, DOI 10.26133/NEA13). Verified against real CSV header (325 columns, 6,451 rows).",
   "notes": [
-    "rowupdate does not exist in pscomppars (only in ps); disc_pubdate and the CSV header timestamp are used until ps is joined.",
-    "sy_distlim does not exist in pscomppars.",
+    "rowupdate does not exist in pscomppars (only in ps). Per approved DEC-002, fetchedAt and latestRowUpdate remain null when unknown; the CSV header file-generation timestamp is stored separately with its timezone unspecified, and disc_pubdate is discovery publication date only.",
+    "sy_distlim does not exist in either pscomppars or ps (verified via NASA TAP_SCHEMA.columns). Missing limit flags remain null, never 0.",
     "pscomppars uses per-parameter *_reflink columns plus disc_refname rather than pl_refname/st_refname/sy_refname."
   ],
   "columns": [
