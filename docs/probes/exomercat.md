@@ -1,11 +1,11 @@
 # Exo-MerCat TAP Probe Report
 
-- **Probed at:** 2026-10-30T19:59:54.135Z
+- **Probed at:** 2026-10-31T03:08:20.857Z
 - **Working Endpoint:** `http://archives.ia2.inaf.it/vo/tap/projects/sync`
 - **Discovered Table:** `exomercat.exomercat`
 - **Total rows in `exomercat.exomercat`:** 17617
 - **Total columns in `exomercat.exomercat`:** 68
-- **TOP 5 probe latency:** 248 ms
+- **TOP 5 probe latency:** 315 ms
 
 ## Discovered Tables
 - `exomercat.exomercat_legacy` (exomercat): 
@@ -84,5 +84,31 @@
 | `r_max` | `double` | `'RJup'` | Positive error on the radius in Jovian radii |
 | `r_min` | `double` | `'RJup'` | Negative error on the radius in Jovian radii |
 
-## Licensing & Sample Note
-- The row-1 sample JSON block previously included at the bottom of this probe report was removed in the Phase 0 closeout commit (`phase/0-audit`) per human direction (`DEC-004`). Because Git history is never rewritten or force-pushed, that 1-row sample block remains in the earlier public WIP commit (`9d92d42`).
+## Name-Bridge Columns Sample (Row 1)
+```json
+{
+  "id": "1",
+  "exomercat_name": "*   3 Cnc b",
+  "nasa_name": "",
+  "toi_name": "",
+  "epic_name": "",
+  "eu_name": "3 Cnc b",
+  "oec_name": "",
+  "host": "3 Cnc",
+  "letter": "b",
+  "main_id": "*   3 Cnc",
+  "main_id_ra": "120.19711479666998",
+  "main_id_dec": "17.308700552619996",
+  "status": "CONFIRMED",
+  "original_status_string": "eu: CONFIRMED",
+  "checked_status_string": "eu: CONFIRMED",
+  "main_id_aliases": "",
+  "main_id_provenance": "SIMBAD",
+  "angular_separation_flag": "0",
+  "angular_separation": "eu: 0.0",
+  "catalog": "eu",
+  "duplicate_catalog_flag": "0",
+  "duplicate_names": "",
+  "misnamed_duplicates_flag": "0"
+}
+```

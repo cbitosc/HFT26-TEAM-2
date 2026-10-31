@@ -162,3 +162,73 @@ export function resolveBulkDensityField(
   });
 }
 
+/**
+ * Determines whether pl_orbsmax represents an established 3D Keplerian orbital semi-major axis,
+ * distinguishing it from sky-projected physical separations (s_perp = theta * d) or unconstrained
+ * statistical estimates in pscomppars (ARCHITECTURE.md Section 6.3, DEC-012).
+ *
+ * @param {object} fields Planet fields dictionary
+ * @param {string|null} [discoveryMethod=null]
+ * @returns {boolean}
+ */
+export function isTrueOrbitalDistanceEstablished(fields, discoveryMethod = null) {
+  if (!fields) return false;
+  const orbsmax = fields.pl_orbsmax;
+  if (!orbsmax || typeof orbsmax.v !== 'number' || !Number.isFinite(orbsmax.v) || orbsmax.v <= 0) {
+    return false;
+  }
+  // Fallback calculated via Kepler's 3rd law from confirmed st_mass and pl_orbper is established
+  if (orbsmax.type === 'calculated') {
+    return true;
+  }
+  // Archive value with limit bounds (lim !== 0) is not an established definitive semi-major axis
+  if (orbsmax.lim !== 0) {
+    return false;
+  }
+
+  // An established Keplerian orbit requires a confirmed non-limit orbital period
+  const orbper = fields.pl_orbper;
+  if (
+    !orbper ||
+    typeof orbper.v !== 'number' ||
+    !Number.isFinite(orbper.v) ||
+    orbper.v <= 0 ||
+    orbper.lim !== 0
+  ) {
+    return false;
+  }
+
+  // Detection methods where pscomppars is known to store sky-projected physical separations
+  // or statistical deprojections in pl_orbsmax
+  const method = discoveryMethod || fields.discoverymethod?.v || null;
+  const isSeparationRiskMethod =
+    method === 'Imaging' || method === 'Microlensing' || method === 'Disk Kinematics';
+
+  if (isSeparationRiskMethod) {
+    // Requires a constrained 3D Keplerian eccentricity (lim === 0 and finite uncertainties)
+    const orbeccen = fields.pl_orbeccen;
+    if (
+      !orbeccen ||
+      typeof orbeccen.v !== 'number' ||
+      !Number.isFinite(orbeccen.v) ||
+      orbeccen.lim !== 0 ||
+      orbeccen.e1 === null ||
+      orbeccen.e2 === null ||
+      !Number.isFinite(orbeccen.e1) ||
+      !Number.isFinite(orbeccen.e2)
+    ) {
+      return false;
+    }
+    // Check reference consistency if references exist
+    if (orbsmax.ref?.raw && orbper.ref?.raw && orbsmax.ref.raw !== orbper.ref.raw) {
+      return false;
+    }
+    if (orbsmax.ref?.raw && orbeccen.ref?.raw && orbsmax.ref.raw !== orbeccen.ref.raw) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+

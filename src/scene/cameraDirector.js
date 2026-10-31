@@ -2,6 +2,7 @@
  * src/scene/cameraDirector.js
  * Coordinates camera transitions across Galaxy, System, and Planet views.
  * Respects `prefers-reduced-motion: reduce` by disabling animated transitions.
+ * Pure target calculation functions are exported for direct testing and modular control.
  */
 
 import { useEffect, useRef } from 'react';
@@ -12,6 +13,41 @@ export function prefersReducedMotion() {
     return false;
   }
   return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/**
+ * Calculates camera position and look-at target for a given view level.
+ *
+ * @param {'galaxy'|'system'|'planet'|string} level View level
+ * @param {object} [options={}] Additional context (e.g. planet radius, custom distances)
+ * @returns {{ position: [number, number, number], target: [number, number, number] }}
+ */
+export function calculateCameraTargets(level, options = {}) {
+  switch (level) {
+    case 'galaxy':
+      return {
+        position: [0, 42, 115],
+        target: [0, 0, 0],
+      };
+    case 'system':
+      return {
+        position: [0, 16, 26],
+        target: [0, 0, 0],
+      };
+    case 'planet': {
+      const radius = typeof options.radius === 'number' && options.radius > 0 ? options.radius : 1.65;
+      const distance = Math.max(3.8, radius * 3.4);
+      return {
+        position: [0, radius * 0.75, distance],
+        target: [0, 0, 0],
+      };
+    }
+    default:
+      return {
+        position: [0, 42, 115],
+        target: [0, 0, 0],
+      };
+  }
 }
 
 export function CameraDirector({ controlsRef }) {
@@ -26,13 +62,11 @@ export function CameraDirector({ controlsRef }) {
     lastSeqRef.current = cameraRequest.seq;
     const animate = !prefersReducedMotion();
 
-    if (cameraRequest.level === 'galaxy') {
-      controls.setLookAt(0, 42, 115, 0, 0, 0, animate);
-    } else if (cameraRequest.level === 'system') {
-      controls.setLookAt(0, 14, 22, 0, 0, 0, animate);
-    } else if (cameraRequest.level === 'planet') {
-      controls.setLookAt(0, 1.2, 5.8, 0, 0, 0, animate);
-    }
+    const targets = calculateCameraTargets(cameraRequest.level);
+    const [px, py, pz] = targets.position;
+    const [tx, ty, tz] = targets.target;
+
+    controls.setLookAt(px, py, pz, tx, ty, tz, animate);
   }, [cameraRequest, controlsRef]);
 
   return null;

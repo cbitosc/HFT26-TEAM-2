@@ -228,3 +228,91 @@ export function buildDisputeSummary(solutionsByField = null) {
   };
 }
 
+/**
+ * Extracts solutions per DISPUTE field from raw NASA `ps` CSV rows for a single planet.
+ *
+ * @param {Array<object>} rows
+ * @returns {Record<string, Array<{ v: number, e1: number|null, e2: number|null, lim: number|null, ref: string|null, pubdate: string|null, default: boolean }>>}
+ */
+export function extractPlanetSolutions(rows = []) {
+  const result = {};
+  for (const f of DISPUTE_FIELDS) {
+    result[f] = [];
+  }
+
+  for (const row of rows) {
+    for (const f of DISPUTE_FIELDS) {
+      const rawV = row[f];
+      if (rawV === null || rawV === undefined || rawV === '') continue;
+      const v = typeof rawV === 'number' ? rawV : parseFloat(String(rawV));
+      if (!Number.isFinite(v)) continue;
+
+      const rawE1 = row[`${f}err1`];
+      const e1 = rawE1 !== null && rawE1 !== undefined && rawE1 !== '' ? parseFloat(String(rawE1)) : null;
+
+      const rawE2 = row[`${f}err2`];
+      const e2 = rawE2 !== null && rawE2 !== undefined && rawE2 !== '' ? parseFloat(String(rawE2)) : null;
+
+      const rawLim = row[`${f}lim`];
+      const lim = rawLim !== null && rawLim !== undefined && rawLim !== '' ? parseInt(String(rawLim), 10) : null;
+
+      const ref = f === 'st_teff' ? (row.st_refname || row.pl_refname || null) : (row.pl_refname || null);
+      const pubdate = row.pl_pubdate || null;
+      const isDefault = row.default_flag === 1 || row.default_flag === '1';
+
+      result[f].push({
+        v,
+        e1: Number.isFinite(e1) ? e1 : null,
+        e2: Number.isFinite(e2) ? e2 : null,
+        lim: Number.isFinite(lim) ? lim : null,
+        ref: typeof ref === 'string' && ref.trim() ? ref.trim() : null,
+        pubdate: typeof pubdate === 'string' && pubdate.trim() ? pubdate.trim() : null,
+        default: isDefault,
+      });
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Decodes a single compact array `[v, e1, e2, lim, refIdx, pubdate, def]`
+ * into a full solution object using the `refs` dictionary.
+ *
+ * @param {Array<any>} arr
+ * @param {Array<string>} [refs=[]]
+ * @returns {{ v: number, e1: number|null, e2: number|null, lim: number|null, ref: string|null, pubdate: string|null, default: boolean }}
+ */
+export function decodeCompactSolution(arr, refs = []) {
+  if (!Array.isArray(arr)) return null;
+  const [v, e1, e2, lim, refIdx, pubdate, def] = arr;
+  return {
+    v,
+    e1: e1 ?? null,
+    e2: e2 ?? null,
+    lim: lim ?? null,
+    ref: typeof refIdx === 'number' && refs[refIdx] !== undefined ? refs[refIdx] : null,
+    pubdate: pubdate ?? null,
+    default: Boolean(def),
+  };
+}
+
+/**
+ * Decodes compact solutions map for a planet across all fields.
+ *
+ * @param {Record<string, Array<Array<any>>>} compactMap
+ * @param {Array<string>} [refs=[]]
+ * @returns {Record<string, Array<object>>}
+ */
+export function decodeCompactSolutions(compactMap, refs = []) {
+  if (!compactMap || typeof compactMap !== 'object') return {};
+  const decoded = {};
+  for (const [field, sols] of Object.entries(compactMap)) {
+    if (Array.isArray(sols)) {
+      decoded[field] = sols.map((s) => decodeCompactSolution(s, refs)).filter(Boolean);
+    }
+  }
+  return decoded;
+}
+
+

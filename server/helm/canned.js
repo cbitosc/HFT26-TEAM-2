@@ -11,6 +11,7 @@ import {
   focus_camera,
   compare_planets,
   open_timeline,
+  formatFieldSummary,
 } from './tools.js';
 import { validateHelmOutput } from './validate.js';
 
@@ -132,11 +133,11 @@ function executeCanned1(snapshot) {
       r.hzStatus === 'in_conservative'
         ? 'conservative habitable zone'
         : 'optimistic habitable zone';
-    return `${r.name} (radius ${radToken}, distance ${distToken}, ${zoneLabel})`;
+    return `${r.name} (radius ${radToken}, system/host distance ${distToken}, ${zoneLabel})`;
   });
 
   const text =
-    `Here are the ${rows.length} nearest confirmed planets in the snapshot with radii near Earth's size sitting in the optimistic habitable zone ` +
+    `Here are the ${rows.length} nearest confirmed planets (sorted by system/host star distance) in the snapshot with radii near Earth's size sitting in the optimistic habitable zone ` +
     `(${conservativeInTop} of these ${rows.length} sit in the conservative habitable zone): ` +
     `${itemDescriptions.join('; ')}. ` +
     `These orbital positions and radii are potential habitability indicators only—stellar activity, atmospheric retention, and composition remain uncertain. ` +
@@ -147,7 +148,7 @@ function executeCanned1(snapshot) {
     ...focusResult.actions,
   ];
 
-  return { text, actions, toolCalls: ['search_planets', 'focus_camera'] };
+  return { text, actions, notice: null, toolCalls: ['search_planets', 'focus_camera'] };
 }
 
 /**
@@ -155,6 +156,25 @@ function executeCanned1(snapshot) {
  * "Which planets have the most disputed measurements?"
  */
 function executeCanned2(snapshot) {
+  const hasDisputeData =
+    Array.isArray(snapshot.planets) &&
+    snapshot.planets.some((p) => p.dispute?.available === true);
+
+  if (!hasDisputeData) {
+    const snapId = snapshot.snapshotId || '2026-10-30-79bb8609';
+    const text =
+      `Multi-solution parameter dispute data (DISPUTE) is currently unavailable in active snapshot ${snapId} because only the composite pscomppars table is loaded in Phase 1a. ` +
+      `Joining the NASA Exoplanet Archive ps multi-solution table to compute per-field interval non-overlap is scheduled after the Phase 1a gate in Phase 1b. ` +
+      `No planets are marked contested or uncontested when multi-solution data are absent.`;
+
+    return {
+      text,
+      actions: [{ type: 'highlight', ids: [], mode: 'clear' }],
+      notice: 'Multi-solution ps dispute data unavailable in Phase 1a snapshot (pending Phase 1b).',
+      toolCalls: ['highlight'],
+    };
+  }
+
   const searchResult = search_planets(
     {
       contestedOnly: true,
@@ -187,7 +207,7 @@ function executeCanned2(snapshot) {
     ...focusResult.actions,
   ];
 
-  return { text, actions, toolCalls: ['search_planets', 'focus_camera'] };
+  return { text, actions, notice: null, toolCalls: ['search_planets', 'focus_camera'] };
 }
 
 /**
@@ -214,7 +234,7 @@ function executeCanned3(snapshot) {
 
   const text =
     `Opening the comparison view for TRAPPIST-1 e alongside the Earth reference record. ` +
-    `In the NASA Exoplanet Archive snapshot, TRAPPIST-1 e has radius ${radToken}, ${massProv} mass ${massToken}, orbital period ${perToken}, equilibrium temperature ${eqtToken}, and system distance ${distToken}. ` +
+    `In the NASA Exoplanet Archive snapshot, TRAPPIST-1 e has radius ${radToken}, ${massProv} mass ${massToken}, orbital period ${perToken}, equilibrium temperature ${eqtToken}, and system/host distance ${distToken}. ` +
     `It orbits within the conservative habitable zone of an ultracool M-dwarf star; these metrics represent potential habitability indicators rather than evidence of a life-supporting atmosphere.`;
 
   const actions = [
@@ -222,7 +242,7 @@ function executeCanned3(snapshot) {
     ...focusResult.actions,
   ];
 
-  return { text, actions, toolCalls: ['compare_planets', 'focus_camera'] };
+  return { text, actions, notice: null, toolCalls: ['compare_planets', 'focus_camera'] };
 }
 
 /**
@@ -236,8 +256,40 @@ function executeCanned4(snapshot) {
   );
   const focusResult = focus_camera({ level: 'galaxy' }, snapshot);
 
+  const peg51 = snapshot.planetById?.get('51-peg-b');
+  const kep186f = snapshot.planetById?.get('kepler-186-f');
+  const milestoneParts = [];
+  if (peg51?.fields?.pl_orbper?.v !== null && peg51?.fields?.pl_orbper?.v !== undefined) {
+    const perToken = formatFieldReceiptOrUnknown(
+      formatFieldSummary(peg51.id, 'pl_orbper', peg51.fields.pl_orbper)
+    );
+    const distToken = formatFieldReceiptOrUnknown(
+      formatFieldSummary(peg51.id, 'sy_dist', peg51.fields.sy_dist)
+    );
+    milestoneParts.push(
+      `${peg51.name} (discovered in 1995 with orbital period ${perToken} at system/host distance ${distToken})`
+    );
+  }
+  if (kep186f?.fields?.pl_rade?.v !== null && kep186f?.fields?.pl_rade?.v !== undefined) {
+    const radToken = formatFieldReceiptOrUnknown(
+      formatFieldSummary(kep186f.id, 'pl_rade', kep186f.fields.pl_rade)
+    );
+    const distToken = formatFieldReceiptOrUnknown(
+      formatFieldSummary(kep186f.id, 'sy_dist', kep186f.fields.sy_dist)
+    );
+    milestoneParts.push(
+      `${kep186f.name} (discovered in 2014 with radius ${radToken} at system/host distance ${distToken})`
+    );
+  }
+
+  const milestoneSentence =
+    milestoneParts.length > 0
+      ? `Notable archive milestones discovered by 2015 include ${milestoneParts.join(' and ')}. `
+      : '';
+
   const text =
     `Setting the discovery timeline filter to show exoplanets discovered from 1992 through 2015 in the galaxy view. ` +
+    milestoneSentence +
     `Discoveries in this era reflect strong observational detection bias: early radial-velocity surveys primarily detected massive close-in gas giants around nearby stars, while the Kepler mission added a narrow cone of transit discoveries.`;
 
   const actions = [
@@ -245,7 +297,7 @@ function executeCanned4(snapshot) {
     ...focusResult.actions,
   ];
 
-  return { text, actions, toolCalls: ['open_timeline', 'focus_camera'] };
+  return { text, actions, notice: null, toolCalls: ['open_timeline', 'focus_camera'] };
 }
 
 /**
@@ -257,45 +309,116 @@ function executeCanned5(snapshot) {
     {
       sortBy: 'distance',
       sortDir: 'asc',
-      limit: 1,
+      limit: 10,
     },
     snapshot
   );
 
-  const nearest = searchResult.rows?.[0];
-  if (!nearest) {
+  const withDist = (snapshot.planets || []).filter((p) => {
+    if (p.status && p.status !== 'confirmed') return false;
+    const v = p.fields?.sy_dist?.v;
+    return typeof v === 'number' && Number.isFinite(v) && v > 0;
+  });
+
+  if (withDist.length === 0 && (!searchResult.rows || searchResult.rows.length === 0)) {
     throw new Error('No planet with known distance found in snapshot');
   }
 
+  let minDistPc = Infinity;
+  for (const p of withDist) {
+    if (p.fields.sy_dist.v < minDistPc) {
+      minDistPc = p.fields.sy_dist.v;
+    }
+  }
+
+  const tiedPlanets = withDist.filter(
+    (p) => Math.abs(p.fields.sy_dist.v - minDistPc) <= 1e-9
+  );
+
+  const primary = tiedPlanets[0] || snapshot.planetById.get(searchResult.rows[0].id);
   const focusResult = focus_camera(
-    { level: 'planet', targetId: nearest.id },
+    { level: 'planet', targetId: primary.id },
     snapshot
   );
 
-  const distToken = formatFieldReceiptOrUnknown(nearest.fields.sy_dist);
-  const radToken = formatFieldReceiptOrUnknown(nearest.fields.pl_rade);
-  const massToken = formatFieldReceiptOrUnknown(nearest.fields.pl_bmasse);
-  const perToken = formatFieldReceiptOrUnknown(nearest.fields.pl_orbper);
-  const eqtToken = formatFieldReceiptOrUnknown(nearest.fields.pl_eqt);
-  const massProv = nearest.massProvenanceLabel || 'unknown';
+  if (tiedPlanets.length > 1) {
+    const tieDescriptions = tiedPlanets.map((p) => {
+      const pDist = formatFieldReceiptOrUnknown(
+        formatFieldSummary(p.id, 'sy_dist', p.fields?.sy_dist)
+      );
+      const pRad = formatFieldReceiptOrUnknown(
+        formatFieldSummary(p.id, 'pl_rade', p.fields?.pl_rade)
+      );
+      const pMass = formatFieldReceiptOrUnknown(
+        formatFieldSummary(p.id, 'pl_bmasse', p.fields?.pl_bmasse)
+      );
+      const pPer = formatFieldReceiptOrUnknown(
+        formatFieldSummary(p.id, 'pl_orbper', p.fields?.pl_orbper)
+      );
+      return `${p.name} (host ${p.hostname}, system/host distance ${pDist}, radius ${pRad}, ${p.massProvenanceLabel || 'unknown'} mass ${pMass}, orbital period ${pPer})`;
+    });
+
+    const primaryHzStatus = primary.hab?.hzPosition?.status ?? 'unknown';
+    const primaryHzLabel =
+      primaryHzStatus === 'in_conservative'
+        ? 'conservative habitable zone'
+        : primaryHzStatus === 'in_optimistic_only'
+          ? 'optimistic habitable zone'
+          : 'outside the estimated habitable zone';
+
+    const text =
+      `In the NASA Exoplanet Archive, sy_dist measures the system/host star distance from the Solar System rather than an instantaneous planet-to-Earth ephemeris distance, so multiple planets in the nearest host system (${primary.hostname}) tie on catalog distance. ` +
+      `Found ${tiedPlanets.length} confirmed planets tied at the minimum system/host star distance in the snapshot: ${tieDescriptions.join('; ')}. ` +
+      `Highlighting all ${tiedPlanets.length} tied planets and focusing the camera on ${primary.name}, which orbits within its host star's ${primaryHzLabel} (one of several potential habitability indicators, subject to M-dwarf stellar flare activity and radial-velocity inclination uncertainty).`;
+
+    const actions = [
+      { type: 'highlight', ids: tiedPlanets.map((p) => p.id), mode: 'set' },
+      ...focusResult.actions,
+    ];
+
+    return { text, actions, notice: null, toolCalls: ['search_planets', 'focus_camera'] };
+  }
+
+  const distToken = formatFieldReceiptOrUnknown(
+    formatFieldSummary(primary.id, 'sy_dist', primary.fields?.sy_dist)
+  );
+  const radToken = formatFieldReceiptOrUnknown(
+    formatFieldSummary(primary.id, 'pl_rade', primary.fields?.pl_rade)
+  );
+  const massToken = formatFieldReceiptOrUnknown(
+    formatFieldSummary(primary.id, 'pl_bmasse', primary.fields?.pl_bmasse)
+  );
+  const perToken = formatFieldReceiptOrUnknown(
+    formatFieldSummary(primary.id, 'pl_orbper', primary.fields?.pl_orbper)
+  );
+  const eqtToken = formatFieldReceiptOrUnknown(
+    formatFieldSummary(primary.id, 'pl_eqt', primary.fields?.pl_eqt)
+  );
+  const massProv = primary.massProvenanceLabel || 'unknown';
+  const hzStatus = primary.hab?.hzPosition?.status ?? 'unknown';
   const hzLabel =
-    nearest.hzStatus === 'in_conservative'
+    hzStatus === 'in_conservative'
       ? 'conservative habitable zone'
-      : nearest.hzStatus === 'in_optimistic_only'
+      : hzStatus === 'in_optimistic_only'
         ? 'optimistic habitable zone'
         : 'outside the estimated habitable zone';
+  const hostNote =
+    primary.hostname === 'Proxima Cen'
+      ? `${primary.hostname} (part of the Alpha Centauri triple system)`
+      : primary.hostname;
 
   const text =
-    `Focusing the camera on ${nearest.name}, the nearest confirmed exoplanet in the snapshot at a distance of ${distToken}. ` +
+    `Focusing the camera on ${primary.name}, the nearest confirmed exoplanet in the snapshot at a system/host star distance (sy_dist) of ${distToken} around ${hostNote}. ` +
+    `Note that catalog sy_dist measures the system/host star distance from the Solar System rather than an instantaneous planet-to-Earth ephemeris distance; ${primary.name} is the sole confirmed planet at this minimum system/host distance in the active pscomppars snapshot (whereas any additional planets sharing the same host distance would tie on sy_dist). ` +
     `Archive records report a radius of ${radToken}, a ${massProv} mass of ${massToken}, an orbital period of ${perToken}, and an equilibrium temperature of ${eqtToken}. ` +
-    `${nearest.name} orbits within its host star's ${hzLabel}, which is one of several potential habitability indicators (subject to M-dwarf stellar flare activity and radial-velocity inclination uncertainty).`;
+    `${primary.name} orbits within its host star's ${hzLabel}, which is one of several potential habitability indicators (subject to M-dwarf stellar flare activity and radial-velocity inclination uncertainty).`;
 
   const actions = [
-    { type: 'highlight', ids: [nearest.id], mode: 'set' },
+    { type: 'highlight', ids: [primary.id], mode: 'set' },
     ...focusResult.actions,
   ];
 
-  return { text, actions, toolCalls: ['search_planets', 'focus_camera'] };
+  return { text, actions, notice: null, toolCalls: ['search_planets', 'focus_camera'] };
 }
 
 /**
@@ -347,7 +470,7 @@ export function executeCannedQuery(queryIdOrText, snapshot) {
       snapshotId: snapshot.snapshotId,
       model: 'deterministic-canned',
       source: 'canned',
-      notice: null,
+      notice: rawResult.notice ?? null,
     },
   };
 
@@ -397,11 +520,11 @@ export function buildDeterministicFallback(message, snapshot, notice = null) {
   const items = rows.map((r) => {
     const distToken = formatFieldReceiptOrUnknown(r.fields.sy_dist);
     const radToken = formatFieldReceiptOrUnknown(r.fields.pl_rade);
-    return `${r.name} (distance ${distToken}, radius ${radToken})`;
+    return `${r.name} (system/host distance ${distToken}, radius ${radToken})`;
   });
 
   const text =
-    `Showing ${rows.length} confirmed planets from the snapshot sorted by distance: ${items.join('; ')}. ` +
+    `Showing ${rows.length} confirmed planets from the snapshot sorted by system/host star distance: ${items.join('; ')}. ` +
     `Select any receipt chip to inspect its archive source reference and uncertainty bounds, or choose one of the canned queries.`;
 
   const validated = validateHelmOutput(
@@ -418,7 +541,7 @@ export function buildDeterministicFallback(message, snapshot, notice = null) {
       source: 'fallback',
       notice:
         notice ??
-        'Using deterministic snapshot search (live AI model is disabled or unavailable).',
+        'Live AI astronomer is currently disabled pending human authorization; showing deterministic archive snapshot results.',
     },
   });
 }

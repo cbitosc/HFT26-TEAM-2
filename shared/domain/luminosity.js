@@ -140,11 +140,21 @@ export function calcInsolationEarth(lumLinearSolar, semiMajorAxisAu) {
 }
 
 /**
- * Resolves `pl_insol` Field: uses archive value if present, or falls back to `L / a^2`.
+ * Resolves `pl_insol` Field: uses archive value if present, or falls back to `L / a^2`
+ * only when true orbital semi-major axis is established (DEC-012).
  */
-export function resolveInsolationField(planetId, archiveInsolField, stLumLinearField, orbsmaxField) {
+export function resolveInsolationField(
+  planetId,
+  archiveInsolField,
+  stLumLinearField,
+  orbsmaxField,
+  isEstablished = true
+) {
   if (archiveInsolField && archiveInsolField.v !== null) {
     return archiveInsolField;
+  }
+  if (!isEstablished) {
+    return makeField({ v: null, type: 'archive' });
   }
   if (
     !stLumLinearField ||

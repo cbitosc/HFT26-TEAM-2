@@ -9,6 +9,7 @@ import { FIELD_DICTIONARY, PLANET_CLASS_META, formatNumericValue } from '../data
 import { ReceiptChip } from '../components/ReceiptChip.jsx';
 import { UnknownValue } from '../components/UnknownValue.jsx';
 import { DetectionBiasCaveat } from '../components/DetectionBiasCaveat.jsx';
+import { DisputePanel, useCrosscatalogFlags } from './DisputePanel.jsx';
 
 const NOTABLE_SYSTEM_EXAMPLES = [
   { systemId: 'trappist-1', planetId: 'trappist-1-e', label: 'TRAPPIST-1 (7 rocky planets)' },
@@ -85,13 +86,21 @@ function FieldRow({ planetId, fieldKey, field, snapshotId, highlight = false, ex
   );
 }
 
-export function PlanetCard() {
+export function PlanetCard({ isOpen = true, onClose = null } = {}) {
   const snapshot = useExplorerStore((s) => s.snapshot);
   const viewLevel = useExplorerStore((s) => s.viewLevel);
   const selectedSystemId = useExplorerStore((s) => s.selectedSystemId);
   const selectedPlanetId = useExplorerStore((s) => s.selectedPlanetId);
   const selectSystem = useExplorerStore((s) => s.selectSystem);
   const selectPlanet = useExplorerStore((s) => s.selectPlanet);
+  const compareIds = useExplorerStore((s) => s.compareIds);
+  const setCompareIds = useExplorerStore((s) => s.setCompareIds);
+  const addCompareId = useExplorerStore((s) => s.addCompareId);
+  const removeCompareId = useExplorerStore((s) => s.removeCompareId);
+
+  if (!isOpen) {
+    return null;
+  }
 
   if (!snapshot) {
     return (
@@ -110,7 +119,20 @@ export function PlanetCard() {
     return (
       <aside className="right-panel" aria-label="Galaxy overview panel">
         <div className="panel-header">
-          <span className="panel-eyebrow">View Level • Galaxy</span>
+          <div className="panel-header-top">
+            <span className="panel-eyebrow">View Level • Galaxy</span>
+            {onClose && (
+              <button
+                type="button"
+                className="panel-close-btn"
+                onClick={onClose}
+                title="Close Inspector"
+                aria-label="Close Inspector"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <h2 className="panel-title">Solar Neighbourhood &amp; Archive Catalogue</h2>
           <p className="panel-subtitle">
             Click any star in the 3D viewport or use the search bar to inspect a system or planet
@@ -218,7 +240,20 @@ export function PlanetCard() {
     return (
       <aside className="right-panel" aria-label={`System details for ${host.hostname}`}>
         <div className="panel-header">
-          <span className="panel-eyebrow">View Level • Stellar System</span>
+          <div className="panel-header-top">
+            <span className="panel-eyebrow">View Level • Stellar System</span>
+            {onClose && (
+              <button
+                type="button"
+                className="panel-close-btn"
+                onClick={onClose}
+                title="Close System Inspector"
+                aria-label="Close System Inspector"
+              >
+                ✕
+              </button>
+            )}
+          </div>
           <h2 className="panel-title">{host.hostname}</h2>
           <div className="badge-row">
             <span className="status-pill">
@@ -258,6 +293,13 @@ export function PlanetCard() {
           <h3 className="section-heading">
             Planets in {host.hostname} ({systemPlanets.length})
           </h3>
+          <div className="dec012-caveat-note">
+            <strong>Scientific Note (DEC-012):</strong> The 3D <code>SystemView</code> orbit ring
+            currently checks <code>pl_orbsmax.lim === 0</code>; routing planets whose archive or
+            Kepler-derived <code>pl_orbsmax</code> carries <code>lim = null</code> (or non-zero
+            limit) to the dashed unestablished-orbit ring is pending <code>DEC-012</code> human
+            approval and the 3D scene update phase.
+          </div>
           <div className="system-planet-list">
             {systemPlanets.map((p) => {
               const cMeta = PLANET_CLASS_META[p.planetClass] || PLANET_CLASS_META.unclassified;
@@ -372,6 +414,7 @@ export function PlanetCard() {
 
   const host = snapshot.hostById.get(planet.systemId) || null;
   const classMeta = PLANET_CLASS_META[planet.planetClass] || PLANET_CLASS_META.unclassified;
+  const { flags: crosscatalogFlags } = useCrosscatalogFlags(planet?.id, snapshotId);
 
   return (
     <aside className="right-panel" aria-label={`Planet Card for ${planet.name}`}>
@@ -379,13 +422,26 @@ export function PlanetCard() {
       <div className="panel-header">
         <div className="planet-header-top">
           <span className="panel-eyebrow">View Level • Confirmed Planet Card</span>
-          <button
-            type="button"
-            className="host-link-btn"
-            onClick={() => selectSystem(planet.systemId)}
-          >
-            ★ Host: {planet.hostname} ↗
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              type="button"
+              className="host-link-btn"
+              onClick={() => selectSystem(planet.systemId)}
+            >
+              ★ Host: {planet.hostname} ↗
+            </button>
+            {onClose && (
+              <button
+                type="button"
+                className="panel-close-btn"
+                onClick={onClose}
+                title="Close Planet Card"
+                aria-label="Close Planet Card"
+              >
+                ✕
+              </button>
+            )}
+          </div>
         </div>
         <h2 className="panel-title">{planet.name}</h2>
 
@@ -399,6 +455,45 @@ export function PlanetCard() {
             <span className="planet-class-dot" style={{ backgroundColor: classMeta.color }} />
             {classMeta.label} (Artist&apos;s impression)
           </span>
+          {crosscatalogFlags && (
+            <span
+              className="class-pill"
+              title="Exoplanet Encyclopaedia (exoplanet.eu via Exo-MerCat bridge) Level 3 confirmation status"
+            >
+              EU: {crosscatalogFlags.status === 'agree' ? 'Agree' : crosscatalogFlags.status === 'disagree' ? 'Disagree' : 'Not Compared'}
+            </span>
+          )}
+        </div>
+
+        <div className="planet-card-compare-actions">
+          <button
+            type="button"
+            className="planet-compare-btn"
+            onClick={() => setCompareIds([planet.id, 'earth'])}
+            title="Open side-by-side comparison against Earth reference"
+          >
+            ⇄ Compare with Earth
+          </button>
+          <button
+            type="button"
+            className={`planet-compare-btn ${compareIds.includes(planet.id) ? '' : 'planet-compare-secondary'}`}
+            onClick={() => {
+              if (compareIds.includes(planet.id)) {
+                removeCompareId(planet.id);
+              } else {
+                addCompareId(planet.id);
+              }
+            }}
+            title={
+              compareIds.includes(planet.id)
+                ? 'Remove this planet from the comparison tray'
+                : 'Add this planet to comparison (up to 3 bodies)'
+            }
+          >
+            {compareIds.includes(planet.id)
+              ? `✓ In Compare (${compareIds.length}/3) • Remove`
+              : `+ Add to Compare (${compareIds.length}/3)`}
+          </button>
         </div>
 
         <div className="discovery-meta-grid">
@@ -537,35 +632,8 @@ export function PlanetCard() {
         </div>
       </div>
 
-      {/* Disputes Section — Honest Unavailable State in Phase 1a */}
-      <div className="panel-section">
-        <h3 className="section-heading">Literature Parameter Disputes (DISPUTE)</h3>
-        {planet.dispute?.available === false ? (
-          <div className="honest-unavailable-box">
-            <UnknownValue label="Disputes unavailable" />
-            <p>
-              Disputes unavailable in Phase 1a snapshot (pending NASA <code>ps</code>{' '}
-              multi-solution table in Phase 1b). Never marked &ldquo;uncontested&rdquo; when
-              multi-solution data are absent.
-            </p>
-          </div>
-        ) : (
-          <div className="honest-unavailable-box">
-            <span>Dispute status: {String(planet.dispute?.disputed ?? 'unknown')}</span>
-          </div>
-        )}
-      </div>
-
-      {/* HELM AI Section — Honest Unavailable State */}
-      <div className="panel-section">
-        <h3 className="section-heading">HELM AI Astronomer</h3>
-        <div className="honest-unavailable-box">
-          <span className="unavailable-pill">Unavailable in this preview slice</span>
-          <p>
-            HELM AI Astronomer unavailable in this slice (pending server/model verification).
-          </p>
-        </div>
-      </div>
+      {/* Disputes & Cross-Catalog Section */}
+      <DisputePanel planet={planet} snapshotId={snapshotId} />
     </aside>
   );
 }

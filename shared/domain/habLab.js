@@ -11,6 +11,7 @@
 import { HAB_LAB_THRESHOLDS, STELLAR_TEFF_BANDS } from './thresholds.js';
 import { classifyHzPosition } from './hz.js';
 import { makeReceiptId } from '../receipts.js';
+import { isTrueOrbitalDistanceEstablished } from './kepler.js';
 
 const CONFIDENCE_RANK = Object.freeze({
   unknown: 0,
@@ -48,16 +49,31 @@ function relativeError(field) {
 }
 
 /**
- * 1. Habitable-Zone Position Indicator (DEC-003, DEC-006)
+ * 1. Habitable-Zone Position Indicator (DEC-003, DEC-006, DEC-012)
  */
-export function evalHzPositionIndicator(planetId, fields, hzEdges, lumRoute) {
+export function evalHzPositionIndicator(planetId, fields, hzEdges, lumRoute, discoveryMethod = null) {
   const orbsmax = fields.pl_orbsmax;
   const stTeff = fields.st_teff;
   const stLumLinear = fields.st_lum_linear;
   const orbeccen = fields.pl_orbeccen;
 
-  const status = classifyHzPosition(orbsmax?.v ?? null, hzEdges, orbsmax?.lim ?? null);
+  const isEstablished = discoveryMethod
+    ? isTrueOrbitalDistanceEstablished(fields, discoveryMethod)
+    : true;
+  const status = isEstablished
+    ? classifyHzPosition(orbsmax?.v ?? null, hzEdges, orbsmax?.lim ?? null, true)
+    : 'unknown';
+
   if (status === 'unknown') {
+    if (!isEstablished) {
+      return {
+        status: 'unknown',
+        label: 'Habitable-zone position unknown (true orbital semi-major axis not established from archive measurements)',
+        confidence: 'unknown',
+        receipts: orbsmax && orbsmax.v !== null ? [makeReceiptId(planetId, 'pl_orbsmax')] : [],
+        note: 'Archive pl_orbsmax is retained with receipt, but true 3D orbital semi-major axis is not established (potentially projected or statistical separation).',
+      };
+    }
     return {
       status: 'unknown',
       label: 'Habitable-zone position unknown (usable orbital distance or stellar flux boundaries unavailable)',
@@ -296,9 +312,10 @@ export function evaluateHabLab({
   massProvenance,
   spectralTypeRaw,
   completenessResult,
+  discoveryMethod = null,
 }) {
   return {
-    hzPosition: evalHzPositionIndicator(planetId, fields, hzEdges, lumRoute),
+    hzPosition: evalHzPositionIndicator(planetId, fields, hzEdges, lumRoute, discoveryMethod),
     sizePlausibility: evalSizePlausibilityIndicator(planetId, fields),
     massPlausibility: evalMassPlausibilityIndicator(planetId, fields, massProvenance),
     stellarType: evalStellarTypeIndicator(planetId, fields, spectralTypeRaw),

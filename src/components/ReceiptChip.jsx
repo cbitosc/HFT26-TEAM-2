@@ -1,7 +1,7 @@
 /**
  * src/components/ReceiptChip.jsx
  * Renders a single Field measurement with its uncertainty, limit flag, provenance badge,
- * source attribution, and an interactive receipt popover.
+ * source attribution, Scientist Mode inline formula/provenance tag, and an interactive receipt popover.
  *
  * Security & Honesty Rules:
  *   - Missing values (field.v === null || field.v === undefined) render <UnknownValue />.
@@ -13,6 +13,7 @@
 
 import { useState } from 'react';
 import { makeReceiptId } from '../../shared/receipts.js';
+import { useExplorerStore } from '../store/explorerStore.js';
 import { FIELD_DICTIONARY, PROVENANCE_TYPE_META, formatNumericValue } from '../data/fieldDictionary.js';
 import { UnknownValue } from './UnknownValue.jsx';
 
@@ -42,8 +43,10 @@ export function ReceiptChip({
   unit,
   snapshotId,
   highlight = false,
+  compact = false,
 }) {
   const [open, setOpen] = useState(false);
+  const scientistMode = useExplorerStore((s) => s.scientistMode);
 
   if (!field || field.v === null || field.v === undefined) {
     return <UnknownValue />;
@@ -76,10 +79,16 @@ export function ReceiptChip({
   const safeHref = isSafeHttpUrl(field.ref?.href) ? field.ref.href.trim() : null;
 
   return (
-    <div className={`receipt-chip-wrapper ${highlight ? 'receipt-chip-highlight' : ''}`}>
+    <span
+      className={`receipt-chip-wrapper ${highlight ? 'receipt-chip-highlight' : ''} ${
+        compact ? 'receipt-chip-inline' : ''
+      }`}
+    >
       <button
         type="button"
-        className={`receipt-chip ${open ? 'receipt-chip-open' : ''}`}
+        className={`receipt-chip ${open ? 'receipt-chip-open' : ''} ${
+          compact ? 'receipt-chip-compact' : ''
+        }`}
         onClick={() => setOpen((prev) => !prev)}
         aria-expanded={open}
         title={`Click to inspect provenance receipt ${receiptId}`}
@@ -102,9 +111,29 @@ export function ReceiptChip({
           >
             {provMeta.badge}
           </span>
-          <span className="receipt-source-short">{shortSource}</span>
+          {!compact && <span className="receipt-source-short">{shortSource}</span>}
         </span>
       </button>
+
+      {scientistMode && (
+        <span className="scientist-inline-tag" aria-label={`Scientist mode provenance for ${receiptId}`}>
+          <code>{receiptId}</code>
+          <span>•</span>
+          <span>type={field.type}</span>
+          {field.lim !== null && field.lim !== 0 && (
+            <>
+              <span>•</span>
+              <span className="scientist-lim-badge">lim={field.lim}</span>
+            </>
+          )}
+          {(field.formula || field.ref?.text) && (
+            <>
+              <span>•</span>
+              <span className="scientist-formula-text">{field.formula || field.ref?.text}</span>
+            </>
+          )}
+        </span>
+      )}
 
       {open && (
         <div className="receipt-popover" role="region" aria-label={`Provenance receipt for ${receiptId}`}>
@@ -124,6 +153,16 @@ export function ReceiptChip({
             <div className="receipt-popover-row">
               <dt>Snapshot ID</dt>
               <dd><code>{snapshotId || 'unknown'}</code></dd>
+            </div>
+
+            <div className="receipt-popover-row">
+              <dt>Value &amp; Bounds</dt>
+              <dd>
+                <code>
+                  {limitPrefix || ''}
+                  {formattedVal} {uncertaintyStr || '(no uncertainty reported)'} {resolvedUnit}
+                </code>
+              </dd>
             </div>
 
             <div className="receipt-popover-row">
@@ -201,7 +240,7 @@ export function ReceiptChip({
           </dl>
         </div>
       )}
-    </div>
+    </span>
   );
 }
 

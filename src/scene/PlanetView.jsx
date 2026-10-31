@@ -1,16 +1,22 @@
 /**
  * src/scene/PlanetView.jsx
- * Renders an artist's impression of the selected planet styled by FORGE-lite planetClass.
- * Unclassified planets render in honest neutral grey.
+ * Close-up individual planet inspection view:
+ *   - Composes procedural `PlanetMesh` styled by FORGE-lite classification
+ *   - Atmospheric glow shell (`AtmosphereGlow`)
+ *   - Optional Saturnian rings for gas giants
+ *   - Key and fill lighting
+ *   - Smooth axial rotation (disabled on prefers-reduced-motion)
+ *   - Honest visual caption: "Artist's impression • Not to scale"
  */
 
 import { useRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { Html } from '@react-three/drei';
-import * as THREE from 'three';
 import { useExplorerStore } from '../store/explorerStore.js';
 import { PLANET_CLASS_META, formatNumericValue } from '../data/fieldDictionary.js';
 import { prefersReducedMotion } from './cameraDirector.js';
+import { PlanetMesh } from './PlanetMesh.jsx';
+import { AtmosphereGlow } from './AtmosphereGlow.jsx';
 
 export function PlanetView() {
   const snapshot = useExplorerStore((s) => s.snapshot);
@@ -33,36 +39,29 @@ export function PlanetView() {
   const radeVal = planet.fields?.pl_rade?.v ?? null;
   const radeLim = planet.fields?.pl_rade?.lim ?? null;
   const eqtVal = planet.fields?.pl_eqt?.v ?? null;
+  const isGasGiant = planet.planetClass === 'gas_giant';
 
   return (
     <group name="planet-view-root" position={[0, 0, 0]}>
-      <directionalLight position={[8, 5, 6]} intensity={2.4} color="#ffffff" />
-      <directionalLight position={[-6, -3, -5]} intensity={0.45} color="#60a5fa" />
+      {/* Dynamic Key and Fill Lighting */}
+      <directionalLight position={[8, 5, 6]} intensity={2.6} color="#ffffff" />
+      <directionalLight position={[-6, -3, -5]} intensity={0.5} color="#60a5fa" />
+      <ambientLight intensity={0.2} />
 
-      {/* Main Planet Sphere */}
-      <mesh ref={meshRef}>
-        <sphereGeometry args={[1.65, 64, 64]} />
-        <meshStandardMaterial
-          color={classMeta.color}
-          emissive={classMeta.emissive}
-          roughness={planet.planetClass === 'gas_giant' ? 0.45 : 0.68}
-          metalness={0.08}
-        />
-      </mesh>
+      {/* Main Procedural Planet Mesh */}
+      <PlanetMesh
+        ref={meshRef}
+        planetClass={planet.planetClass}
+        radius={1.65}
+        hasRings={isGasGiant}
+      />
 
-      {/* Subtle Atmosphere Rim Shell */}
-      <mesh>
-        <sphereGeometry args={[1.74, 48, 48]} />
-        <meshBasicMaterial
-          color={classMeta.atmosphere}
-          transparent
-          opacity={0.14}
-          side={THREE.BackSide}
-        />
-      </mesh>
+      {/* Atmospheric Rim Glow */}
+      <AtmosphereGlow planetClass={planet.planetClass} radius={1.65} />
 
-      <Html position={[0, -2.35, 0]} center distanceFactor={10}>
-        <div className="scene-planet-focus-caption">
+      {/* Informative & Honest Data Overlay */}
+      <Html position={[0, -2.45, 0]} center distanceFactor={10}>
+        <div className="scene-planet-focus-caption" role="region" aria-label="Planet view summary">
           <div className="caption-title">{planet.name}</div>
           <div className="caption-sub">
             {classMeta.label} •{' '}
@@ -70,6 +69,17 @@ export function PlanetView() {
               ? `${radeLim === 1 ? '≤ ' : radeLim === -1 ? '≥ ' : ''}${formatNumericValue(radeVal)} R⊕`
               : 'Radius unknown'}
             {eqtVal !== null ? ` • ${formatNumericValue(eqtVal)} K` : ''}
+          </div>
+          <div
+            style={{
+              fontSize: '9.5px',
+              color: '#f59e0b',
+              marginTop: '3px',
+              letterSpacing: '0.04em',
+              textTransform: 'uppercase',
+            }}
+          >
+            Artist&apos;s impression • Not to scale
           </div>
         </div>
       </Html>

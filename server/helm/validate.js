@@ -45,7 +45,7 @@ const NAKED_MEASUREMENT_WITH_UNIT_REGEX =
  * Common astronomical catalog prefixes whose designation numbers are names, not measurements.
  */
 const CATALOG_DESIGNATION_REGEX =
-  /\b(?:TRAPPIST|Kepler|K2|TOI|KOI|GJ|Gliese|HD|HIP|LHS|LP|LTT|Wolf|Ross|WASP|HAT-P|HATS|CoRoT|XO|TrES|KELT|Qatar|NGTS|MASCARA|OGLE|MOA|KMT|TIC|Gaia|PSR|WD|BD|CD|CPD|TYC|2MASS|WISE|SPECULOOS|Teegarden's)\s*[-+]?\s*\d+(?:[.-]\d+)*(?:\s*[a-zA-Z])?\b/gi;
+  /\b(?:(?:TRAPPIST|Kepler|K2|TOI|KOI|GJ|Gliese|HD|HIP|LHS|LP|LTT|Wolf|Ross|WASP|HAT-P|HATS|CoRoT|XO|TrES|KELT|Qatar|NGTS|MASCARA|OGLE|MOA|KMT|TIC|Gaia|PSR|WD|BD|CD|CPD|TYC|2MASS|WISE|SPECULOOS|Teegarden's)\s*[-+]?\s*\d+(?:[.-]\d+)*(?:\s*[a-zA-Z])?|\d+\s+(?:Peg|Cnc|Cet|Psc|Ari|Tau|Gem|Leo|Vir|Lib|Sco|Sgr|Cap|Aqr|UMa|UMi|Dra|Cyg|Lyr|Aql|Her|Boo|CrB|Oph|Ser|And|Per|Cas|Cep|Aur|Ori|CMa|CMi|Mon|Hya|Crv|Crt|Cen|Lup|Ara|Pav|Gru|Phe|Tuc|Hyi|Oct|Men|Cha|Mus|Cru|Cir|TrA|Nor|Tel|Mic|PsA|Scl|For|Eri|Hor|Ret|Dor|Pic|Col|Lep|Pup|Vel|Car|Ant|Sex|LMi|CVn|Com|Lyn|Cam|Lac|Vul|Sge|Del|Equ|Pegasi|Cancri)(?:\s+[b-i])?)\b/gi;
 
 const PLANET_ID_ALIASES = Object.freeze({
   'proxima-centauri-b': 'proxima-cen-b',
@@ -186,6 +186,11 @@ export function checkNakedNumbers(text, snapshot = null) {
 
   // Remove all receipt tokens first so numbers insidereceipt IDs (e.g. trappist-1-e.pl_rade) are ignored
   working = working.replace(RECEIPT_TOKEN_REGEX, ' ');
+
+  // Remove exact snapshotId if present so date-hash identifiers (e.g. 2026-10-30-79bb8609) are not parsed as numbers
+  if (snapshot && typeof snapshot.snapshotId === 'string' && snapshot.snapshotId.length > 0) {
+    working = working.split(snapshot.snapshotId).join(' ');
+  }
 
   // Remove exact planet names and hostnames from the snapshot if provided
   if (snapshot && Array.isArray(snapshot.planets)) {

@@ -1,10 +1,10 @@
 /**
  * api/helm.js
  * Vercel Serverless Function entrypoint for `POST /api/helm`.
- * Delegates to `handleHelmRequest` in `server/helm/index.js`.
+ * Delegates to `handleHelmRequest` in `server/helm/handler.js`.
  */
 
-import { handleHelmRequest } from '../server/helm/index.js';
+import { handleHelmRequest } from '../server/helm/handler.js';
 
 async function readRequestBody(req) {
   if (req.body !== undefined && req.body !== null) {
@@ -52,8 +52,16 @@ export default async function handler(req, res) {
     return sendJson(res, 400, { error: 'Invalid JSON request body.' });
   }
 
+  const clientIp =
+    (typeof req.headers?.['x-forwarded-for'] === 'string'
+      ? req.headers['x-forwarded-for'].split(',')[0].trim()
+      : null) ||
+    req.headers?.['x-real-ip'] ||
+    req.socket?.remoteAddress ||
+    'anonymous';
+
   try {
-    const result = await handleHelmRequest(body);
+    const result = await handleHelmRequest(body, { clientIp });
     return sendJson(res, result.status, result.body);
   } catch (_err) {
     return sendJson(res, 500, { error: 'Internal HELM server error.' });

@@ -15,6 +15,9 @@ import {
   KOPPARAPU_2013_T_REF_K,
 } from './thresholds.js';
 import { makeField, makeReceiptId } from '../receipts.js';
+import { isTrueOrbitalDistanceEstablished } from './kepler.js';
+
+export { isTrueOrbitalDistanceEstablished };
 
 export const KOPPARAPU_2013_ERRATUM_TABLE_3 = Object.freeze({
   recentVenus: Object.freeze({
@@ -216,8 +219,8 @@ export function buildHzEdgeFields(planetId, stTeffField, stLumLinearField) {
 
 /**
  * Classifies a planet's orbital distance `aAu` relative to the HZ boundaries.
- * Per DEC-006: if a usable orbital distance cannot be established (e.g. `aAu` is null, <= 0,
- * or comes from a limit-flagged semi-major axis), returns `'unknown'`.
+ * Per DEC-006 & DEC-012: if a usable orbital distance cannot be established (e.g. `aAu` is null, <= 0,
+ * comes from a limit-flagged semi-major axis, or orbital distance is unestablished), returns `'unknown'`.
  *
  * Conservative HZ: [runawayGreenhouseAu, maxGreenhouseAu]
  * Optimistic HZ:   [recentVenusAu, earlyMarsAu]
@@ -225,10 +228,12 @@ export function buildHzEdgeFields(planetId, stTeffField, stLumLinearField) {
  * @param {number|null} aAu
  * @param {object|null} edges
  * @param {number|null} [orbsmaxLim=0]
+ * @param {boolean} [isEstablished=true]
  * @returns {'in_conservative' | 'in_optimistic_only' | 'outside_inner' | 'outside_outer' | 'unknown'}
  */
-export function classifyHzPosition(aAu, edges, orbsmaxLim = 0) {
+export function classifyHzPosition(aAu, edges, orbsmaxLim = 0, isEstablished = true) {
   if (
+    !isEstablished ||
     !edges ||
     typeof aAu !== 'number' ||
     !Number.isFinite(aAu) ||

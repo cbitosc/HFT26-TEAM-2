@@ -38,6 +38,7 @@ export const useExplorerStore = create((set, get) => ({
   timelineYear: 2026,
   timelinePlaying: false,
   compareIds: [],
+  compareOpen: false,
   scientistMode: false,
   orbitSpeed: 1.0,
 
@@ -165,7 +166,40 @@ export const useExplorerStore = create((set, get) => ({
 
   setTimelinePlaying: (playing) => set({ timelinePlaying: Boolean(playing) }),
 
-  setCompareIds: (ids) => set({ compareIds: Array.isArray(ids) ? ids.slice(0, 3) : [] }),
+  setCompareIds: (ids) => {
+    const list = Array.isArray(ids) ? ids.slice(0, 3) : [];
+    set({
+      compareIds: list,
+      compareOpen: list.length > 0,
+    });
+  },
+
+  addCompareId: (id) => {
+    if (!id || typeof id !== 'string') return;
+    const current = get().compareIds;
+    if (current.includes(id)) {
+      set({ compareOpen: true });
+      return;
+    }
+    const next = current.length >= 3 ? [...current.slice(1), id] : [...current, id];
+    set({
+      compareIds: next,
+      compareOpen: true,
+    });
+  },
+
+  removeCompareId: (id) => {
+    if (!id) return;
+    const next = get().compareIds.filter((x) => x !== id);
+    set({
+      compareIds: next,
+      compareOpen: next.length > 0 ? get().compareOpen : false,
+    });
+  },
+
+  clearCompareIds: () => set({ compareIds: [], compareOpen: false }),
+
+  setCompareOpen: (open) => set({ compareOpen: Boolean(open) }),
 
   setScientistMode: (enabled) => set({ scientistMode: Boolean(enabled) }),
 
@@ -198,4 +232,95 @@ export const useExplorerStore = create((set, get) => ({
 
   clearCameraRequest: () => set({ cameraRequest: null }),
 }));
+
+/**
+ * Selects 3D-positioned host stars discovered on or before timelineYear.
+ * Hosts without 3D position are excluded.
+ * Unknown discovery years are never invented; they only appear when viewing all (year >= 2026).
+ *
+ * @param {object|null} snapshot
+ * @param {number} [timelineYear=2026]
+ * @returns {Array<object>} Filtered positioned host records
+ */
+export function selectVisibleGalaxyHosts(snapshot, timelineYear = 2026) {
+  if (!snapshot?.galaxy) return [];
+  const year = typeof timelineYear === 'number' && Number.isFinite(timelineYear) ? timelineYear : 2026;
+  return snapshot.galaxy.filter((h) => {
+    if (
+      !h.hasPosition ||
+      !h.posDisplay ||
+      !Number.isFinite(h.posDisplay.x) ||
+      !Number.isFinite(h.posDisplay.y) ||
+      !Number.isFinite(h.posDisplay.z)
+    ) {
+      return false;
+    }
+    if (typeof h.firstDiscYear !== 'number' || !Number.isFinite(h.firstDiscYear)) {
+      return year >= 2026;
+    }
+    return h.firstDiscYear <= year;
+  });
+}
+
+/**
+ * Selects confirmed planets discovered on or before timelineYear.
+ *
+ * @param {object|null} snapshot
+ * @param {number} [timelineYear=2026]
+ * @returns {Array<object>} Filtered planet records
+ */
+export function selectTimelineFilteredPlanets(snapshot, timelineYear = 2026) {
+  if (!snapshot?.planets) return [];
+  const year = typeof timelineYear === 'number' && Number.isFinite(timelineYear) ? timelineYear : 2026;
+  return snapshot.planets.filter((p) => {
+    const y = p.discovery?.year;
+    if (typeof y !== 'number' || !Number.isFinite(y)) {
+      return year >= 2026;
+    }
+    return y <= year;
+  });
+}
+
+/**
+ * Computes discovery timeline statistics through the given year.
+ *
+ * @param {object|null} snapshot
+ * @param {number} [timelineYear=2026]
+ * @returns {{ cumulativeCount: number, inExactYear: number, visibleHostsCount: number, methodCounts: Record<string, number> }}
+ */
+export function selectTimelineStats(snapshot, timelineYear = 2026) {
+  const methodCounts = {
+    Transit: 0,
+    'Radial Velocity': 0,
+    Microlensing: 0,
+    Imaging: 0,
+  };
+  let cumulativeCount = 0;
+  let inExactYear = 0;
+
+  if (snapshot?.planets) {
+    for (const p of snapshot.planets) {
+      const y = p.discovery?.year;
+      if (typeof y === 'number' && Number.isFinite(y) && y <= timelineYear) {
+        cumulativeCount += 1;
+        if (y === timelineYear) {
+          inExactYear += 1;
+        }
+        const m = p.discovery?.method;
+        if (m && Object.prototype.hasOwnProperty.call(methodCounts, m)) {
+          methodCounts[m] += 1;
+        }
+      }
+    }
+  }
+
+  const visibleHosts = selectVisibleGalaxyHosts(snapshot, timelineYear);
+
+  return {
+    cumulativeCount,
+    inExactYear,
+    visibleHostsCount: visibleHosts.length,
+    methodCounts,
+  };
+}
 

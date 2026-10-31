@@ -1,15 +1,47 @@
 /**
  * src/scene/GalaxyPoints.jsx
- * Renders all positioned host stars (4,819 hosts with valid RA/Dec/sy_dist)
- * in a single THREE.Points draw call using BufferGeometry.
- * Never fabricates 3D coordinates for the 28 unpositioned hosts.
+ * Renders all positioned host stars in a single THREE.Points draw call.
+ * Dynamically filters visible host stars by `timelineYear` (1992–2026),
+ * enabling users and HELM to explore discoveries unfolding over time.
+ * Points are colored by primary detection method to visualize detection bias.
  */
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Html } from '@react-three/drei';
 import * as THREE from 'three';
-import { useExplorerStore } from '../store/explorerStore.js';
+import { useExplorerStore, selectVisibleGalaxyHosts } from '../store/explorerStore.js';
 import { formatNumericValue } from '../data/fieldDictionary.js';
+
+/**
+ * Standard palette for exoplanet detection methods.
+ * Visually communicates observational bias (e.g. Kepler transit cone vs RV solar neighborhood).
+ */
+export const METHOD_COLORS = Object.freeze({
+  Transit: '#38bdf8', // Cyan / Kepler sky-blue
+  'Radial Velocity': '#fb923c', // Warm orange / Doppler shift
+  Microlensing: '#c084fc', // Purple / Gravitational lens
+  Imaging: '#34d399', // Emerald / Direct photon imaging
+  default: '#94a3b8', // Muted slate for timing, astrometry & secondary methods
+  highlight: '#ffcf4a', // Bright gold for active searches or HELM selections
+});
+
+/**
+ * Resolves the display color for a host star point.
+ *
+ * @param {object} host Host record from galaxy.json
+ * @param {boolean} [isHighlighted=false]
+ * @returns {string} Hex color
+ */
+export function getHostDotColor(host, isHighlighted = false) {
+  if (isHighlighted) {
+    return METHOD_COLORS.highlight;
+  }
+  const method = host?.primaryMethod;
+  if (method && METHOD_COLORS[method]) {
+    return METHOD_COLORS[method];
+  }
+  return METHOD_COLORS.default;
+}
 
 function createStarSpriteTexture() {
   if (typeof document === 'undefined') return null;
@@ -36,6 +68,7 @@ function createStarSpriteTexture() {
 
 export function GalaxyPoints() {
   const snapshot = useExplorerStore((s) => s.snapshot);
+  const timelineYear = useExplorerStore((s) => s.timelineYear);
   const highlightIds = useExplorerStore((s) => s.highlightIds);
   const selectSystem = useExplorerStore((s) => s.selectSystem);
   const setHoverId = useExplorerStore((s) => s.setHoverId);
@@ -44,18 +77,22 @@ export function GalaxyPoints() {
 
   const spriteTexture = useMemo(() => createStarSpriteTexture(), []);
 
-  // Filter strictly to hosts with real 3D positions (never invent coordinates)
+  // Filter strictly to hosts discovered on or before the selected timelineYear
   const positionedHosts = useMemo(() => {
-    if (!snapshot?.galaxy) return [];
-    return snapshot.galaxy.filter(
-      (h) =>
-        h.hasPosition === true &&
-        h.posDisplay !== null &&
-        Number.isFinite(h.posDisplay.x) &&
-        Number.isFinite(h.posDisplay.y) &&
-        Number.isFinite(h.posDisplay.z)
-    );
-  }, [snapshot]);
+    return selectVisibleGalaxyHosts(snapshot, timelineYear);
+  }, [snapshot, timelineYear]);
+
+  // When timeline moves backwards, dismiss hover state if the hovered host is hidden
+  useEffect(() => {
+    if (
+      hoveredHost &&
+      typeof hoveredHost.firstDiscYear === 'number' &&
+      hoveredHost.firstDiscYear > timelineYear
+    ) {
+      setHoveredHost(null);
+      setHoverId(null);
+    }
+  }, [timelineYear, hoveredHost, setHoverId]);
 
   const highlightSet = useMemo(() => new Set(highlightIds || []), [highlightIds]);
 
@@ -75,15 +112,8 @@ export function GalaxyPoints() {
         highlightSet.size > 0 &&
         (highlightSet.has(h.systemId) || h.planetIds.some((pid) => highlightSet.has(pid)));
 
-      if (isHighlighted) {
-        color.set('#ffcf4a');
-      } else if (h.hasHzPlanet) {
-        color.set('#5eead4');
-      } else if (h.planetCount >= 3) {
-        color.set('#93c5fd');
-      } else {
-        color.set('#cbd5e1');
-      }
+      const hex = getHostDotColor(h, isHighlighted);
+      color.set(hex);
 
       colors[i * 3] = color.r;
       colors[i * 3 + 1] = color.g;
@@ -112,7 +142,7 @@ export function GalaxyPoints() {
         </Html>
       </group>
 
-      {/* Single draw call THREE.Points for all 4,819 positioned host stars */}
+      {/* Single draw call THREE.Points for positioned host stars filtered by timelineYear */}
       <points
         geometry={geometry}
         onPointerMove={(e) => {
@@ -165,6 +195,8 @@ export function GalaxyPoints() {
               <div className="tooltip-meta">
                 {hoveredHost.planetCount}{' '}
                 {hoveredHost.planetCount === 1 ? 'planet' : 'planets'}
+                {hoveredHost.firstDiscYear ? ` • Discovered ${hoveredHost.firstDiscYear}` : ''}
+                {hoveredHost.primaryMethod ? ` (${hoveredHost.primaryMethod})` : ''}
                 {hoveredHost.syDistPc !== null
                   ? ` • ${formatNumericValue(hoveredHost.syDistPc)} pc`
                   : ''}
