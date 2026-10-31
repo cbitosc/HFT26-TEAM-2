@@ -13,26 +13,31 @@
  *        node --env-file=.env.local scripts/bakeoff-models.js --full
  *
  * Security & Safety:
- *   - Never loads .env.local or reads FEATHERLESS_API_KEY during --dry-run or --verify-guards.
+ *   - Never opens or reads .env.local from disk in code; uses process.env.FEATHERLESS_API_KEY only.
+ *   - Never reads FEATHERLESS_API_KEY during --dry-run or --verify-guards or before resolveConfig succeeds.
+ *   - Pins requests strictly to https://api.featherless.ai/v1 and blocks all HTTP redirects (redirect: 'error').
  *   - Never prints, logs, or echoes FEATHERLESS_API_KEY, Authorization headers, or raw error bodies.
  *   - Smoke mode enforces:
  *       * Exactly 2 distinct approved models: Qwen/Qwen3-14B and Qwen/Qwen3-8B
  *       * Exactly 1 prompt and 1 repeat
- *       * Hard cap of 2 completion requests total (no /v1/models call, no retries, no fallbacks)
- *       * No report file written unless explicitly requested in full mode
+ *       * Hard cap of 2 sequential completion requests total (no /v1/models call, no retries, no fallbacks)
+ *       * Tool arguments validated against shared/schemas.js (ToolArgumentSchemasByName)
  */
 
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { ToolArgumentSchemasByName } from '../shared/schemas.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.resolve(__dirname, '..');
-const PROBES_DIR = path.join(ROOT, 'docs', 'probes');
-
+export const OFFICIAL_FEATHERLESS_BASE_URL = 'https://api.featherless.ai/v1';
 export const APPROVED_SMOKE_MODELS = Object.freeze(['Qwen/Qwen3-14B', 'Qwen/Qwen3-8B']);
 export const HARD_SMOKE_MAX_REQUESTS = 2;
+export const ALLOWED_CLI_FLAGS = Object.freeze([
+  '--smoke',
+  '--full',
+  '--dry-run',
+  '--verify-guards',
+]);
 
 export const TOOLS = [
   {
@@ -196,18 +201,88 @@ export function parsePositiveInt(rawValue, fieldName) {
 }
 
 /**
+ * Validates that the base URL points strictly to the official Featherless v1 endpoint
+ * with HTTPS, no custom port, no credentials, no query string, and no hash.
+ */
+export function validateFeatherlessBaseUrl(rawUrl) {
+  const PIN_ERROR =
+    'Untrusted or invalid FEATHERLESS_BASE_URL: requests are pinned strictly to https://api.featherless.ai/v1';
+  if (typeof rawUrl !== 'string' || !rawUrl.trim()) {
+    throw new Error(PIN_ERROR);
+  }
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl.trim());
+  } catch {
+    throw new Error(PIN_ERROR);
+  }
+
+  const normalizedPathname = parsedUrl.pathname.replace(/\/+$/, '');
+  if (
+    parsedUrl.protocol !== 'https:' ||
+    parsedUrl.hostname !== 'api.featherless.ai' ||
+    parsedUrl.port !== '' ||
+    parsedUrl.username !== '' ||
+    parsedUrl.password !== '' ||
+    normalizedPathname !== '/v1' ||
+    parsedUrl.search !== '' ||
+    parsedUrl.hash !== ''
+  ) {
+    throw new Error(PIN_ERROR);
+  }
+
+  const normalized = `${parsedUrl.protocol}//${parsedUrl.hostname}${normalizedPathname}`;
+  if (normalized !== OFFICIAL_FEATHERLESS_BASE_URL) {
+    throw new Error(PIN_ERROR);
+  }
+  return OFFICIAL_FEATHERLESS_BASE_URL;
+}
+
+/**
  * Resolves and validates the run configuration without touching credentials or network.
  */
 export function resolveConfig(env = process.env, argv = process.argv.slice(2)) {
+  if (!Array.isArray(argv)) {
+    throw new Error('Invalid CLI arguments array');
+  }
+
+  for (const arg of argv) {
+    if (typeof arg !== 'string' || !ALLOWED_CLI_FLAGS.includes(arg)) {
+      throw new Error(`Unknown or unsupported CLI argument: "${String(arg)}"`);
+    }
+  }
+
+  const hasSmokeFlag = argv.includes('--smoke');
+  const hasFullFlag = argv.includes('--full');
+  if (hasSmokeFlag && hasFullFlag) {
+    throw new Error('Conflicting mode flags: --smoke and --full cannot be combined');
+  }
+
+  const rawEnvMode = env.BAKEOFF_MODE !== undefined ? String(env.BAKEOFF_MODE).trim() : '';
+  if (rawEnvMode !== '' && rawEnvMode !== 'smoke' && rawEnvMode !== 'full') {
+    throw new Error(`Invalid BAKEOFF_MODE: must be "smoke" or "full", got "${rawEnvMode}"`);
+  }
+
+  if (hasSmokeFlag && rawEnvMode === 'full') {
+    throw new Error('Conflicting mode configuration: --smoke cannot be combined with BAKEOFF_MODE=full');
+  }
+  if (hasFullFlag && rawEnvMode === 'smoke') {
+    throw new Error('Conflicting mode configuration: --full cannot be combined with BAKEOFF_MODE=smoke');
+  }
+  if (!hasFullFlag && rawEnvMode === 'full') {
+    throw new Error(
+      'Conflicting mode configuration: BAKEOFF_MODE=full requires explicit --full CLI flag and cannot override default/smoke mode'
+    );
+  }
+
   const isDryRun = argv.includes('--dry-run') || env.BAKEOFF_DRY_RUN === '1';
   const isVerifyGuards = argv.includes('--verify-guards');
-  const isFullMode = argv.includes('--full') || env.BAKEOFF_MODE === 'full';
+  const isFullMode = hasFullFlag;
   const isSmokeMode = !isFullMode; // Default to strict smoke-test mode for safety
 
-  const baseUrl = (env.FEATHERLESS_BASE_URL || 'https://api.featherless.ai/v1').replace(/\/+$/, '');
-  if (!/^https:\/\/[a-z0-9.-]+(\/[a-z0-9._/-]*)?$/i.test(baseUrl)) {
-    throw new Error('Invalid FEATHERLESS_BASE_URL: must be a valid HTTPS URL');
-  }
+  const rawBaseUrl =
+    env.FEATHERLESS_BASE_URL !== undefined ? env.FEATHERLESS_BASE_URL : OFFICIAL_FEATHERLESS_BASE_URL;
+  const baseUrl = validateFeatherlessBaseUrl(rawBaseUrl);
 
   const rawModels = env.BAKEOFF_MODELS
     ? env.BAKEOFF_MODELS.split(',').map((s) => s.trim()).filter(Boolean)
@@ -302,54 +377,111 @@ export function resolveConfig(env = process.env, argv = process.argv.slice(2)) {
 }
 
 /**
- * Loads FEATHERLESS_API_KEY only for live execution. Never called in dry-run or guard tests.
+ * Loads FEATHERLESS_API_KEY strictly from the provided environment object (defaults to process.env).
+ * Never opens or reads .env.local from disk. Never called in dry-run or guard tests.
  */
-function loadLiveApiKey() {
-  if (process.env.FEATHERLESS_API_KEY) {
-    return process.env.FEATHERLESS_API_KEY;
+export function loadLiveApiKey(env = process.env) {
+  const key = typeof env?.FEATHERLESS_API_KEY === 'string' ? env.FEATHERLESS_API_KEY.trim() : '';
+  if (!key) {
+    throw new Error(
+      'Missing FEATHERLESS_API_KEY in process environment. Run with node --env-file=.env.local scripts/bakeoff-models.js --smoke'
+    );
   }
-  const envLocalPath = path.join(ROOT, '.env.local');
-  if (fs.existsSync(envLocalPath)) {
-    const lines = fs.readFileSync(envLocalPath, 'utf8').split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eqIdx = trimmed.indexOf('=');
-      if (eqIdx > 0) {
-        const k = trimmed.slice(0, eqIdx).trim();
-        const v = trimmed.slice(eqIdx + 1).trim().replace(/^['"]|['"]$/g, '');
-        if (k === 'FEATHERLESS_API_KEY' && v) {
-          return v;
-        }
-      }
-    }
-  }
-  throw new Error('Missing FEATHERLESS_API_KEY for live run.');
+  return key;
 }
 
-export function validateToolCalls(toolCalls, expectedTools) {
+/**
+ * Validates tool calls against the runtime Zod schemas in shared/schemas.js.
+ */
+export function validateToolCalls(toolCalls, expectedTools = []) {
   if (!Array.isArray(toolCalls) || toolCalls.length === 0) {
-    return { valid: false, correct: false, names: [] };
+    return { valid: false, correct: false, names: [], errors: ['No tool_calls present'] };
   }
   const names = [];
   for (const tc of toolCalls) {
+    if (tc?.type !== undefined && tc.type !== 'function') {
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: [`Unsupported tool_call type: ${String(tc?.type)}`],
+      };
+    }
     const fnName = tc?.function?.name;
     const rawArgs = tc?.function?.arguments;
-    if (!fnName || typeof rawArgs !== 'string') {
-      return { valid: false, correct: false, names };
+    if (typeof fnName !== 'string' || !fnName || typeof rawArgs !== 'string') {
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: ['Missing function.name or non-string function.arguments'],
+      };
     }
+    const schema = Object.prototype.hasOwnProperty.call(ToolArgumentSchemasByName, fnName)
+      ? ToolArgumentSchemasByName[fnName]
+      : null;
+    if (!schema) {
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: [`Unknown tool name: ${fnName}`],
+      };
+    }
+
+    let parsed;
     try {
-      const parsed = JSON.parse(rawArgs);
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        return { valid: false, correct: false, names };
-      }
-      names.push(fnName);
+      parsed = JSON.parse(rawArgs);
     } catch {
-      return { valid: false, correct: false, names };
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: [`Invalid JSON arguments for ${fnName}`],
+      };
     }
+
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: [`Arguments for ${fnName} must be a JSON object`],
+      };
+    }
+
+    const validation = schema.safeParse(parsed);
+    if (!validation.success) {
+      return {
+        valid: false,
+        correct: false,
+        names,
+        errors: validation.error.issues.map(
+          (issue) => `${fnName}.${issue.path.join('.') || '<root>'}: ${issue.message}`
+        ),
+      };
+    }
+
+    names.push(fnName);
   }
-  const correct = expectedTools.some((exp) => names.includes(exp));
-  return { valid: true, correct, names };
+
+  const correct =
+    Array.isArray(expectedTools) &&
+    expectedTools.length > 0 &&
+    expectedTools.every((exp) => names.includes(exp));
+  return { valid: true, correct, names, errors: [] };
+}
+
+/**
+ * Redacts any accidental occurrence of the API key from an error message.
+ */
+export function sanitizeErrorMessage(err, env = process.env) {
+  let msg = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+  const rawKey = typeof env?.FEATHERLESS_API_KEY === 'string' ? env.FEATHERLESS_API_KEY.trim() : '';
+  if (rawKey && msg.includes(rawKey)) {
+    msg = msg.split(rawKey).join('[REDACTED]');
+  }
+  return msg;
 }
 
 /**
@@ -357,10 +489,13 @@ export function validateToolCalls(toolCalls, expectedTools) {
  * Enforces a hard request budget with zero retries and zero fallbacks.
  */
 export async function executeBakeoff(config, { apiKey, fetchImpl = globalThis.fetch } = {}) {
+  const validatedBaseUrl = validateFeatherlessBaseUrl(config?.baseUrl);
+
   if (config.isDryRun) {
     return {
       dryRun: true,
       mode: config.mode,
+      baseUrl: validatedBaseUrl,
       models: config.models,
       promptCount: config.prompts.length,
       repeats: config.repeats,
@@ -372,7 +507,7 @@ export async function executeBakeoff(config, { apiKey, fetchImpl = globalThis.fe
     };
   }
 
-  if (!apiKey || typeof apiKey !== 'string') {
+  if (!apiKey || typeof apiKey !== 'string' || !apiKey.trim()) {
     throw new Error('Live execution requires a non-empty apiKey');
   }
 
@@ -389,8 +524,9 @@ export async function executeBakeoff(config, { apiKey, fetchImpl = globalThis.fe
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20000);
     try {
-      const res = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+      const res = await fetchImpl(`${validatedBaseUrl}/chat/completions`, {
         method: 'POST',
+        redirect: 'error',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
@@ -409,6 +545,22 @@ export async function executeBakeoff(config, { apiKey, fetchImpl = globalThis.fe
         signal: controller.signal,
       });
       const elapsedMs = Date.now() - started;
+
+      // Reject any redirect immediately without reading body or following
+      if (
+        res.redirected === true ||
+        (typeof res.status === 'number' && res.status >= 300 && res.status < 400)
+      ) {
+        return {
+          ok: false,
+          status: typeof res.status === 'number' && res.status >= 300 && res.status < 400 ? res.status : 'REDIRECT_BLOCKED',
+          elapsedMs,
+          valid: false,
+          correct: false,
+          calledTools: [],
+          hasThink: false,
+        };
+      }
 
       // Never read or print raw error response bodies
       if (!res.ok) {
@@ -521,6 +673,7 @@ export async function runGuardChecks() {
     const defaultCfg = resolveConfig({}, ['--dry-run']);
     assert.equal(defaultCfg.mode, 'smoke');
     assert.equal(defaultCfg.isDryRun, true);
+    assert.equal(defaultCfg.baseUrl, OFFICIAL_FEATHERLESS_BASE_URL);
     assert.deepEqual(defaultCfg.models, ['Qwen/Qwen3-14B', 'Qwen/Qwen3-8B']);
     assert.equal(defaultCfg.prompts.length, 1);
     assert.equal(defaultCfg.repeats, 1);
@@ -535,7 +688,52 @@ export async function runGuardChecks() {
     assert.equal(dryRes.credentialsLoaded, false);
     assert.equal(dryRes.reportWritten, false);
 
-    // 3. Rejects non-positive or malformed integer inputs
+    // 3. Rejects mode conflicts and unknown CLI flags before any request or key load
+    assert.throws(
+      () => resolveConfig({ BAKEOFF_MODE: 'full' }, ['--smoke']),
+      /Conflicting mode configuration: --smoke cannot be combined with BAKEOFF_MODE=full/
+    );
+    assert.throws(
+      () => resolveConfig({ BAKEOFF_MODE: 'full' }, []),
+      /Conflicting mode configuration: BAKEOFF_MODE=full requires explicit --full CLI flag/
+    );
+    assert.throws(
+      () => resolveConfig({ BAKEOFF_MODE: 'smoke' }, ['--full']),
+      /Conflicting mode configuration: --full cannot be combined with BAKEOFF_MODE=smoke/
+    );
+    assert.throws(
+      () => resolveConfig({}, ['--smoke', '--full']),
+      /Conflicting mode flags: --smoke and --full cannot be combined/
+    );
+    assert.throws(
+      () => resolveConfig({ BAKEOFF_MODE: 'turbo' }, ['--smoke']),
+      /Invalid BAKEOFF_MODE/
+    );
+    for (const badArg of ['--smok', '--foo', 'smoke', '--url=https://evil.example.com']) {
+      assert.throws(
+        () => resolveConfig({}, [badArg]),
+        /Unknown or unsupported CLI argument/
+      );
+    }
+
+    // 4. Rejects non-official FEATHERLESS_BASE_URL before loading key
+    for (const badUrl of [
+      'https://evil.example.com/v1',
+      'http://api.featherless.ai/v1',
+      'https://api.featherless.ai:8443/v1',
+      'https://user:pass@api.featherless.ai/v1',
+      'https://api.featherless.ai/v2',
+      'https://api.featherless.ai/v1/extra',
+      'https://api.featherless.ai/v1?foo=bar',
+      'https://api.featherless.ai/v1#frag',
+    ]) {
+      assert.throws(
+        () => resolveConfig({ FEATHERLESS_BASE_URL: badUrl }, ['--smoke']),
+        /Untrusted or invalid FEATHERLESS_BASE_URL/
+      );
+    }
+
+    // 5. Rejects non-positive or malformed integer inputs
     for (const badVal of ['0', '-1', '1.5', 'abc', '', 'NaN', 'Infinity']) {
       assert.throws(
         () => resolveConfig({ BAKEOFF_REPEATS: badVal }, []),
@@ -549,7 +747,7 @@ export async function runGuardChecks() {
       );
     }
 
-    // 4. Rejects smoke-mode prompt or repeat count > 1
+    // 6. Rejects smoke-mode prompt or repeat count > 1
     assert.throws(
       () => resolveConfig({ BAKEOFF_REPEATS: '2' }, []),
       /Smoke-test mode requires exactly 1 repeat/
@@ -559,7 +757,7 @@ export async function runGuardChecks() {
       /Smoke-test mode requires exactly 1 prompt/
     );
 
-    // 5. Rejects duplicate, single, >2, or unapproved models in smoke mode
+    // 7. Rejects duplicate, single, >2, or unapproved models in smoke mode
     assert.throws(
       () => resolveConfig({ BAKEOFF_MODELS: 'Qwen/Qwen3-14B,Qwen/Qwen3-14B' }, []),
       /duplicate model IDs/
@@ -577,17 +775,63 @@ export async function runGuardChecks() {
       /Unapproved model/
     );
 
-    // 6. Mock smoke execution: exactly 2 calls, validates structured tool calls, no retry on error, no error body read
-    const liveSmokeCfg = resolveConfig({}, []);
+    // 8. Process environment key loading only (never touches disk)
+    assert.throws(
+      () => loadLiveApiKey({}),
+      /Missing FEATHERLESS_API_KEY in process environment/
+    );
+    assert.equal(loadLiveApiKey({ FEATHERLESS_API_KEY: '  mock_env_key  ' }), 'mock_env_key');
+
+    // 9. Zod tool argument schema validation checks
+    assert.equal(
+      validateToolCalls(
+        [
+          {
+            type: 'function',
+            function: {
+              name: 'search_planets',
+              arguments: JSON.stringify({ radiusEarth: { min: 0.8, max: 1.6 }, hz: 'in_optimistic', limit: 5 }),
+            },
+          },
+        ],
+        ['search_planets']
+      ).valid,
+      true
+    );
+    for (const invalidCall of [
+      { name: 'search_planets', args: { limit: '5' } },
+      { name: 'search_planets', args: { limit: 99 } },
+      { name: 'search_planets', args: { radiusEarth: { min: 2.0, max: 1.0 } } },
+      { name: 'search_planets', args: { hz: 'in_optimistic', extraField: true } },
+      { name: 'compare_planets', args: { planetIds: ['earth'] } },
+      { name: 'focus_camera', args: { level: 'planet' } },
+      { name: 'highlight', args: { mode: 'set', planetIds: [] } },
+      { name: 'open_timeline', args: { throughYear: 1800 } },
+      { name: 'invent_planets', args: {} },
+    ]) {
+      const check = validateToolCalls(
+        [{ type: 'function', function: { name: invalidCall.name, arguments: JSON.stringify(invalidCall.args) } }],
+        [invalidCall.name]
+      );
+      assert.equal(check.valid, false, `Expected invalid tool call ${invalidCall.name} to fail Zod validation`);
+      assert.equal(check.correct, false);
+    }
+
+    // 10. Mock smoke execution: 2 calls, redirect: 'error' passed, 302/429 rejected without reading body
+    const liveSmokeCfg = resolveConfig({}, ['--smoke']);
     let mockCalls = 0;
     let errorBodyRead = false;
-    const mockFetch = async (_url, init) => {
+    const seenRedirectModes = [];
+    const mockFetch = async (url, init) => {
       mockCalls += 1;
+      assert.equal(url, `${OFFICIAL_FEATHERLESS_BASE_URL}/chat/completions`);
+      seenRedirectModes.push(init.redirect);
       const body = JSON.parse(init.body);
       if (body.model === 'Qwen/Qwen3-14B') {
         return {
           ok: true,
           status: 200,
+          redirected: false,
           json: async () => ({
             choices: [
               {
@@ -595,6 +839,7 @@ export async function runGuardChecks() {
                   content: '',
                   tool_calls: [
                     {
+                      type: 'function',
                       function: {
                         name: 'search_planets',
                         arguments: JSON.stringify({
@@ -610,10 +855,11 @@ export async function runGuardChecks() {
           }),
         };
       }
-      // Second model simulates a 429 error to verify zero retries and that error body is never read
+      // Second model simulates a 302 redirect response to verify redirects are never followed or read
       return {
         ok: false,
-        status: 429,
+        status: 302,
+        redirected: true,
         text: async () => {
           errorBodyRead = true;
           return 'SENSITIVE_UPSTREAM_BODY_DO_NOT_READ';
@@ -629,15 +875,16 @@ export async function runGuardChecks() {
       apiKey: 'MOCK_KEY_NOT_REAL',
       fetchImpl: mockFetch,
     });
-    assert.equal(mockCalls, 2, 'Smoke test must make exactly 2 calls with 0 retries on 429');
+    assert.equal(mockCalls, 2, 'Smoke test must make exactly 2 calls with 0 retries');
+    assert.deepEqual(seenRedirectModes, ['error', 'error']);
     assert.equal(mockRes.requestsMade, 2);
-    assert.equal(errorBodyRead, false, 'Error response body must never be read');
+    assert.equal(errorBodyRead, false, 'Redirect/error response body must never be read');
     assert.equal(mockRes.summary[0].runs[0].valid, true);
     assert.equal(mockRes.summary[0].runs[0].correct, true);
-    assert.equal(mockRes.summary[1].runs[0].status, 429);
+    assert.equal(mockRes.summary[1].runs[0].status, 302);
     assert.equal(mockRes.summary[1].runs[0].valid, false);
 
-    // 7. Hard cap guard blocks any call beyond maxRequests
+    // 11. Hard cap guard blocks any call beyond maxRequests
     const tamperedCfg = {
       ...liveSmokeCfg,
       maxRequests: 1, // Force cap of 1 while 2 models are queued
@@ -653,7 +900,7 @@ export async function runGuardChecks() {
 
     return {
       ok: true,
-      checksPassed: 7,
+      checksPassed: 11,
       networkRequests: 0,
       credentialsLoaded: false,
       filesWritten: 0,
@@ -665,14 +912,13 @@ export async function runGuardChecks() {
 
 async function main() {
   const argv = process.argv.slice(2);
+  const config = resolveConfig(process.env, argv);
 
-  if (argv.includes('--verify-guards')) {
+  if (config.isVerifyGuards) {
     const report = await runGuardChecks();
     console.log('Guard & mock verification passed:', JSON.stringify(report, null, 2));
     return;
   }
-
-  const config = resolveConfig(process.env, argv);
 
   if (config.isDryRun) {
     const report = await executeBakeoff(config);
@@ -681,8 +927,8 @@ async function main() {
     return;
   }
 
-  // Live execution path (only reached when neither --dry-run nor --verify-guards is passed)
-  const apiKey = loadLiveApiKey();
+  // Live execution path (only reached when resolveConfig succeeds and neither --dry-run nor --verify-guards is passed)
+  const apiKey = loadLiveApiKey(process.env);
   console.log(
     `Starting live ${config.mode} test: models=${config.models.join(', ')} | prompts=${config.prompts.length} | repeats=${config.repeats} | maxRequests=${config.maxRequests}`
   );
@@ -700,7 +946,7 @@ const isDirectRun =
   process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url));
 if (isDirectRun) {
   main().catch((err) => {
-    console.error('Bake-off error:', err.message);
+    console.error('Bake-off error:', sanitizeErrorMessage(err, process.env));
     process.exitCode = 1;
   });
 }

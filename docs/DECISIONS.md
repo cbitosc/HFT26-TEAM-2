@@ -127,3 +127,49 @@ Any deviation from `docs/ARCHITECTURE.md` or unresolved schema/licensing questio
      - `npm test` (`vitest`) was not run in Phase 0 and will be installed and configured in Phase 1a.
   2. Back up the current local `README.md` as-is (after verifying it contains no secrets) in the Phase 0 closeout checkpoint commit on `phase/0-audit`; do not delete, restore, or rewrite it.
 - **Status:** **APPROVED by Human**
+
+---
+
+## DEC-010 — Compact On-Disk Snapshot Format with Lossless Shared Codec (APPROVED)
+
+- **Context:** Uncompressed canonical JSON for all 6,451 planets (`2026-10-30-4c47327d`) was `57,548,026` bytes (`54.88 MiB`) and `galaxy.json` was `1,538,938` bytes (exceeding the `< 12,000,000` B and `< 1,500,000` B uncompressed targets).
+- **Approved Decision:**
+  1. Use the compact on-disk snapshot format (`exoplanet-snapshot-compact-v1`) implemented in `shared/snapshotCodec.js` (`encodeGalaxySnapshot`, `decodeGalaxySnapshot`, `encodePlanetsSnapshot`, `decodePlanetsSnapshot`), which deduplicates `refs` (`2,377` unique `{ text, href, raw }` entries) and repeated string literals (`1,572` entries) inside `planets.json` and omits optional `null`/`false` keys on disk.
+  2. Decoding reconstructs the **exact** canonical `PlanetRecord` and `GalaxyHost` objects (`assert.deepStrictEqual` verified across all `6,451` planets and `4,847` hosts against the uncompacted draft `2026-10-30-4c47327d`). Missing values and limit flags decode to `null` (never `0`), and unavailable disputes decode to `disputed: null` and `contested: null` (never `false`).
+  3. Include every file needed to reconstruct the snapshot (`galaxy.json` and `planets.json` with its embedded `refs` and `strings` dictionaries) in `contentHash` (`79bb8609...`), kept distinct from `rawCsvSha256` (`57f0ccfa...`).
+  4. Do not delete or overwrite the existing draft `public/snapshots/2026-10-30-4c47327d` without explicit human permission.
+- **Status:** **APPROVED by Human (Implemented & Verified in `2026-10-30-79bb8609`)**
+
+---
+
+## DEC-011 — Limited Workflow Overlap Exception (Phase 1a Verification ∥ Phase 2 App Shell & Basic 3D) and Old Draft Deletion Authorization (APPROVED)
+
+- **Context:** To keep the hackathon build on schedule, the human authorized:
+  1. Overlapping Phase 1a independent verification and old-draft cleanup (`Workstream A`) with building the Phase 2 app shell and basic 3D scene (`Workstream B`) on branch `phase/1a-contracts-snapshot`, while keeping Phase 1a marked unapproved until independent review and human sign-off.
+  2. Deleting **only** `public/snapshots/2026-10-30-4c47327d/` if and only if: (a) it is confirmed uncommitted and not externally referenced/deployed, (b) `verify-snapshot.js` and `tests/domain.test.js` perform full raw-source, provenance, null/limit, hash, and codec round-trip checks without depending on that draft, (c) verification, `npm test`, and `npm run build` pass in an isolated workspace without that draft, and (d) the independent reviewer inspects the actual codec and pipeline code.
+  3. Keeping `data/raw/pscomppars.csv` at its current staging path until human sign-off on moving/copying it to `data/raw/<snapshotId>/pscomppars.csv` (so no 49 MB move or duplicate occurs without human approval).
+- **Status:** **APPROVED by Human (Phase 1a Gate Remains Open Until Independent Review & Human Sign-Off)**
+
+---
+
+## DEC-012 — Distinguishing Established Orbital Semi-Major Axis from Potentially Projected or Unconstrained Separation in `pscomppars` (PROPOSAL — AWAITING HUMAN APPROVAL)
+
+- **Context:** Independent Science Review (`cc99a777-6873-4900-a5e4-1fbb190ce046`) of `data/raw/pscomppars.csv` (`6,451` rows), `shared/domain/hz.js`, `shared/domain/habLab.js`, `scripts/build-snapshot.js`, and `src/scene/SystemView.jsx` revealed a scientific blocker:
+  - NASA's `pscomppars` table has no separate column for sky-projected physical separation $s_\perp\text{ [AU]}$ and no distance-provenance column on `pl_orbsmax`. When papers report a projected physical separation $s_\perp = \theta \cdot d$ in AU (or a Bayesian/statistical deprojection) as `value ± uncertainty` rather than an inequality (`<` or `>`), `pscomppars` stores that value in `pl_orbsmax` with **`pl_orbsmaxlim = 0`**.
+  - **Example (`2M0437 b`, `discoverymethod = "Imaging"`):** Gaidos et al. 2022 reported a $\sim 0.92''$ sky-projected separation at $128.5\text{ pc}$ ($\approx 118 \pm 1.3\text{ AU}$) without a 3D Keplerian orbit fit. In `pscomppars.csv`, `pl_orbsmax = 118.0`, `pl_orbsmaxlim = 0`, `pl_orbper = null`, `pl_orbeccen = null`. The current snapshot (`2026-10-30-79bb8609`) and `SystemView.jsx` treat `pl_orbsmaxlim === 0` as proof of a true orbital semi-major axis, assigning `hab.hzPosition` `status: "outside_outer"`, `confidence: "high"` (with note *"circular orbit assumed"*) and rendering `2M0437 b` on a solid Keplerian orbit ring.
+  - Across all `6,451` rows: `348` rows have `pl_orbsmax` (`lim = 0`) without a confirmed non-limit `pl_orbper` (`70` `Imaging`, `274` `Microlensing`, `1` `Disk Kinematics` `HD 97048 b`, `1` `Pulsar Timing` `PSR B1620-26 b`, `1` `TTV` `Kepler-539 c` with `pl_orbperlim = -1`, `1` `RV` `TOI-4010 e` with `pl_orbperlim = -1`). Additionally, `11` `Imaging` rows (e.g., `COCONUTS-2 b`, `HR 8799 b/c/d`) and `9` `Microlensing` rows (e.g., `OGLE-2005-BLG-390L b`, `MOA-2011-BLG-293L b`) have `pl_orbper` populated from statistical/nominal projections without constrained non-limit eccentricity uncertainties. Conversely, `7` `Imaging` rows (e.g., `PDS 70 c`, `HR 2562 b`) have Keplerian orbital posteriors (`pl_orbeccen` with `lim = 0` and uncertainties) where $P$ in days was not tabulated in `pscomppars`.
+- **Proposed Decision (Minimal Fix):**
+  1. **Retain NASA Value & Receipt:** Always retain the archive `fields.pl_orbsmax` value, uncertainties, `lim`, reference, and `<planetId>.pl_orbsmax` receipt untouched. Never relabel `pl_orbsmax` as `"projected separation"`, because missing `pl_orbper` alone does not prove projected separation, and `lim === 0` alone does not prove a true 3D orbital semi-major axis.
+  2. **Criterion for Established True Orbital Semi-Major Axis (`isTrueOrbitalDistanceEstablished(fields, discoveryMethod)` in `shared/domain/hz.js`):**
+     - `pl_orbsmax` is treated as an established orbital semi-major axis **if and only if**:
+       - `pl_orbsmax.type === 'calculated'` (Kepler's Third Law fallback from positive confirmed non-limit `st_mass` and `pl_orbper`), **OR**
+       - `pl_orbsmax.v > 0 && pl_orbsmax.lim === 0` **AND** `pl_orbper.v > 0 && pl_orbper.lim === 0` **AND** for methods where `pscomppars` mixes sky-projected/statistical separations into `pl_orbsmax` (`Imaging`, `Microlensing`, `Disk Kinematics`), a co-referenced 3D Keplerian eccentricity constraint (`pl_orbeccen.v !== null && pl_orbeccen.lim === 0 && pl_orbeccen.e1 !== null && pl_orbeccen.e2 !== null` from the same reference as `pl_orbsmax` and `pl_orbper`) is also present.
+  3. **When Distance Type Cannot Be Established (`!isTrueOrbitalDistanceEstablished`):**
+     - `hab.hzPosition` returns `status: 'unknown'`, `confidence: 'unknown'`, retains `receipts: ['<planetId>.pl_orbsmax']` (when `pl_orbsmax.v !== null`), and includes an explicit note stating that the archive `pl_orbsmax` value is retained with its receipt, but whether it represents a true 3D orbital semi-major axis or a potentially projected/unconstrained separation cannot be established from the archive fields.
+     - `resolveInsolationField` (`shared/domain/luminosity.js`) only computes fallback $S = L / a^2$ when `isTrueOrbitalDistanceEstablished` is `true`.
+     - `src/scene/SystemView.jsx` places planets with `!isTrueOrbitalDistanceEstablished` on the **dashed ring** (`"Dashed ring: True orbital semi-major axis not established or limit-bound in archive"`) while still displaying their retained archive AU value (`"<val> AU (orbit type unestablished)"`).
+  4. **Dataset Impact (Once Approved):** Changes `50` planets (including `2M0437 b`, `GJ 504 b`, `GU Psc b`, `COCONUTS-2 b`, `Gaia23braL b`, `TCP J05074264+2447555 b`, `Kepler-539 c`, `TOI-4010 e`) from `outside_outer`/`outside_inner` to `hzPosition.status = 'unknown'`, moves `368` unestablished-orbit planets onto the dashed ring in `SystemView.jsx`, and alters **zero (`0`)** planets in `in_conservative` (`180`) or `in_optimistic_only` (`108`).
+- **Status:** **PROPOSAL — Awaiting Human Approval (Existing Snapshot `2026-10-30-79bb8609` Not Overwritten)**
+
+
+
