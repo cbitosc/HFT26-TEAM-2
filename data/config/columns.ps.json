@@ -1,0 +1,38 @@
+{
+  "table": "ps",
+  "description": "Pinned column whitelist for NASA Exoplanet Archive ps (Planetary Systems, DOI 10.26133/NEA12) used for DISPUTE solution spread and latest rowupdate.",
+  "columns": [
+    "pl_name",
+    "hostname",
+    "default_flag",
+    "soltype",
+    "pl_controv_flag",
+    "pl_refname",
+    "st_refname",
+    "sy_refname",
+    "rowupdate",
+    "pl_pubdate",
+    "pl_rade",
+    "pl_radeerr1",
+    "pl_radeerr2",
+    "pl_radelim",
+    "pl_bmasse",
+    "pl_bmasseerr1",
+    "pl_bmasseerr2",
+    "pl_bmasselim",
+    "pl_bmassprov",
+    "pl_orbper",
+    "pl_orbpererr1",
+    "pl_orbpererr2",
+    "pl_orbperlim",
+    "pl_eqt",
+    "pl_eqterr1",
+    "pl_eqterr2",
+    "pl_eqtlim",
+    "st_teff",
+    "st_tefferr1",
+    "st_tefferr2",
+    "st_tefflim"
+  ]
+}
+

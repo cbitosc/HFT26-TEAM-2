@@ -1,0 +1,33 @@
+{
+  "snapshotId": "2026-10-30-79bb8609",
+  "fetchedAt": null,
+  "latestRowUpdate": null,
+  "headerTimestampRaw": "Fri Oct 30 10:10:20 2026",
+  "sources": [
+    {
+      "name": "pscomppars",
+      "doi": "10.26133/NEA13",
+      "urlOrPath": "data/raw/pscomppars.csv",
+      "rawCsvPath": "data/raw/pscomppars.csv",
+      "rawCsvSha256": "57f0ccfa4cff4f7c9a6900d96e518959a360bba4be501c8f208c92f3c5795995",
+      "rawCsvBytes": 49052758,
+      "rowCount": 6451
+    }
+  ],
+  "contentHash": "79bb8609b9d3b8a4591bd154c3dfd7fbf8b887aa3535e2c2cb74be6167d3d5d2",
+  "columnWhitelistHash": "8363f7a3532034702f6e48320b61c09c999e5d56cda76c8827cf8a13b5a044e8",
+  "counts": {
+    "planets": 6451,
+    "hosts": 4847,
+    "hostsWithPosition": 4819,
+    "planetsWithPosition": 6423,
+    "withSolutions": 0
+  },
+  "fileSizes": {
+    "galaxy.json": 1319580,
+    "galaxy.json.gz": 202230,
+    "planets.json": 11690661,
+    "planets.json.gz": 1349024,
+    "manifest.json": 935
+  }
+}
